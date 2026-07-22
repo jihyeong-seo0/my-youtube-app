@@ -1,13 +1,18 @@
 """
-유튜브 댓글 분석 대시보드 - 1단계 (댓글 수집)
+유튜브 댓글 분석 대시보드 - 2단계 (댓글 수집 + 단어 빈도 분석)
 - 사용자가 유튜브 영상 링크를 입력하면
   YouTube Data API v3로 댓글을 최대 100개까지 가져와 보여준다.
 - 좋아요가 많은 순(order=relevance)으로 가져온 뒤, 다시 한 번 좋아요 순으로 정렬해서 보여준다.
+- 가져온 댓글을 단어로 쪼개서 자주 나온 단어 상위 20개를 그래프로 보여준다.
 """
+
+import re
+from collections import Counter
 
 import streamlit as st
 import pandas as pd
 import requests
+import plotly.graph_objects as go
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------------------------------------------
@@ -15,7 +20,7 @@ from urllib.parse import urlparse, parse_qs
 # ------------------------------------------------------------------
 st.set_page_config(page_title="유튜브 댓글 분석", page_icon="💬", layout="wide")
 st.title("💬 유튜브 댓글 분석 대시보드")
-st.caption("1단계: 영상 링크를 입력하면 좋아요가 많은 댓글 순으로 최대 100개를 가져와요.")
+st.caption("2단계: 댓글을 가져오고, 자주 나온 단어 TOP 20을 뽑아봐요.")
 
 # ------------------------------------------------------------------
 # 2. 예시로 쓸 링크 두 개를 상수로 정의
@@ -212,3 +217,65 @@ st.dataframe(
         "댓글": st.column_config.TextColumn(width="large"),
     },
 )
+
+# ------------------------------------------------------------------
+# 12. 댓글을 단어로 쪼개서 자주 나온 단어 세기
+#     - 정규식으로 영어/숫자/한글만 단어로 인식 (특수문자, 이모지 등은 제외)
+#     - 대소문자 구분 없이 세기 위해 소문자로 통일
+#     - 한 글자짜리 단어(예: '오', 'a', '그')는 의미가 약해서 제외
+# ------------------------------------------------------------------
+def tokenize(text: str) -> list[str]:
+    text = text.lower()
+    # 영어 알파벳, 숫자, 한글 완성형 글자만 단어로 인식
+    words = re.findall(r"[a-z0-9가-힣]+", text)
+    # 한 글자짜리 단어는 제외
+    return [w for w in words if len(w) > 1]
+
+
+all_words = []
+for comment_text in df["댓글"]:
+    all_words.extend(tokenize(comment_text))
+
+word_counts = Counter(all_words)
+top20 = word_counts.most_common(20)
+
+st.divider()
+st.subheader("🔠 자주 나온 단어 TOP 20")
+st.caption("한 글자짜리 단어는 제외했어요. (예: '오', '그', 'a' 등)")
+
+if not top20:
+    st.warning("😥 분석할 수 있는 단어가 충분하지 않아요.")
+else:
+    word_df = pd.DataFrame(top20, columns=["단어", "빈도"])
+    # 가로 막대그래프는 아래→위 순서로 그려지므로,
+    # 가장 많이 나온 단어가 맨 위에 오도록 오름차순으로 정렬해서 넣는다.
+    word_df = word_df.sort_values("빈도", ascending=True)
+
+    fig_words = go.Figure(
+        go.Bar(
+            x=word_df["빈도"],
+            y=word_df["단어"],
+            orientation="h",
+            marker=dict(
+                color=word_df["빈도"],
+                colorscale="Blues",
+                line=dict(color="rgba(0,0,0,0.1)", width=1),
+            ),
+            text=word_df["빈도"],
+            textposition="outside",
+            hovertemplate="단어: %{y}<br>등장 횟수: %{x}회<extra></extra>",
+        )
+    )
+
+    fig_words.update_layout(
+        height=600,
+        margin=dict(l=10, r=40, t=20, b=10),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+        yaxis=dict(showgrid=False, tickfont=dict(size=14)),
+        font=dict(family="Arial", size=13),
+        showlegend=False,
+    )
+
+    st.plotly_chart(fig_words, use_container_width=True)
